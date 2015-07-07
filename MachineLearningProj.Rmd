@@ -1,0 +1,132 @@
+---
+title: "Machine learning project"
+author: "Krupa Shah"
+output: html_document
+---
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+library("knitr")
+library("caret")
+library("randomForest")
+opts_chunk$set(echo=TRUE,warning=FALSE)
+```
+
+##Project Summary
+In this project, our goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Based on these readings, we will use classification techniques to predict the outcome in variable 'classe'. 
+
+##Data import and clean up
+```{r}
+#Treat "NA", "" and "#DIV/0!" as na strings
+training <- read.csv(header=TRUE,file="F:/R/MachineLearning/pml-training.csv",na.strings = c("NA", "", "#DIV/0!"))
+testing <- read.csv(header=TRUE,file="F:/R/MachineLearning/pml-testing.csv",na.strings = c("NA", "", "#DIV/0!"))
+
+#Keep columns for which total count of na's is 0
+keepCols <- colSums(is.na(training))==0  
+training <- training[,keepCols]
+keepCols2 <- colSums(is.na(testing))==0 
+testing <- testing[,keepCols2]
+
+#Remove all date time and name columns since they are not needed for modelling and prediction
+training <- training[,c(8:60)]
+testing <- testing[,c(8:60)]
+```
+The training and testing datasets are now reduced to just 53 columns.
+
+##Data exploration
+We will inspect just a couple of plots to see how well the variables classify the data into different values of 'classe'.
+```{r fig.show='hide'}
+qplot(roll_belt,yaw_belt,color=classe,data=training)        #see Appendix 1.
+qplot(roll_forearm,yaw_forearm,color=classe,data=training)  #see Appendix 2.
+```
+
+##Data partition for cross validation
+We will partition the training set into 20%, 50% and 30% for model fitting, model tuning and cross validation.
+
+```{r}
+#partition the data into 20%, 50%, 30%  for training, fine tuning, cross validating
+set.seed(777)
+rowind <- createDataPartition(y=training$classe,p=0.2,list=FALSE)
+trainset1 <- training[rowind,]
+tempset <- training[-rowind,]
+
+#partition the tempset into 50 30 (total 80)
+rowind <- createDataPartition(y=tempset$classe,p=0.5/0.8,list=FALSE)
+trainset2 <- tempset[rowind,]
+cvset <- tempset[-rowind,]
+```
+
+##Model fitting
+We will use random forest method to train the data. We will do cross validation using trainControl
+```{r}
+trnCtrl <- trainControl(method="cv",number = 3)  #trainControl parameter to be used in all train() functions
+fit1 <- train(classe~.,data=trainset1,method="rf",trControl = trnCtrl)
+fit1
+fit1$finalModel
+```
+
+##Model tuning
+We will observe importance of the variables from fit1 to select the most influential variables.
+```{r fig.show='hide'}
+plot(varImp(fit1),main="Ordered importance of fit1")   #see Appendix 3.
+```
+
+We will set 8 as the cutoff for importance. 
+```{r}
+#Pick only those variables whose importance >= 8
+imp <- varImp(fit1)[[1]]
+imp$movement <- rownames(imp)
+rownames(imp)<- NULL
+imp <- imp[imp$Overall>=8,]
+imp <- imp[order(imp$Overall,decreasing = TRUE),]
+impCols <- imp$movement
+impCols
+
+trainset2 <- trainset2[,c(impCols,"classe")]  #create a subset containing only important variables and outcome variable
+fit2 <- train(classe~.,data=trainset2,method="rf",trControl = trnCtrl)
+fit2
+fit2$finalModel
+```
+
+##Cross validation 
+```{r}
+validation <- predict(fit2,cvset)      #apply fit2 on cvset
+m <- confusionMatrix(validation,cvset$classe)
+m
+```
+
+##Out of sample error rate
+Out of sample error rate is calculated as 1-Accuracy.
+```{r}
+ier <- (1- max(fit2$results$Accuracy))*100    #in sample error rate
+oer <- (1- m$overall[1])*100                  #out of sample error rate
+```
+
+##Model fit conclusion
+1. Final fit fit2 is carried out on 50% of the data with reduced number of variables.
+2. Cross validation carried out on remaining 30% of data. 
+3. Accuracy of the final model is `r max(fit2$results$Accuracy)` with kappa value of `r max(fit2$results$Kappa)`.
+4. As per cross validation of the model, the accuracy is `r m$overall[1]` with kappa value of `r m$overall[2]`.
+5. In sample error rate using fit2 is `r ier`. 
+6. Out of sample error rate using cross validation is `r oer`.
+
+##Prediction on test set
+```{r}
+answers <- predict(fit2,testing)
+answers
+```
+
+##Appendix
+1.Plot showing roll_belt and yaw_belt 
+```{r,echo=FALSE,fig.align='left'} 
+qplot(roll_belt,yaw_belt,color=classe,data=training)
+```
+
+2.Plot showing roll_forearm and yaw_forearm
+```{r,echo=FALSE,fig.align='left'} 
+qplot(roll_forearm,yaw_forearm,color=classe,data=training)
+``` 
+
+3.Plot showing ordered importance of fit1 variables.
+```{r echo=FALSE,fig.align='left',fig.height=10}
+plot(varImp(fit1),main="Ordered importance of fit1")  
+```
